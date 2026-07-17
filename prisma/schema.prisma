@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// คำขอเบิกเงิน 1 รายการ = 1 record ที่ไหลผ่านสถานะต่างๆ ตลอดกระบวนการ
+// pending_approval -> approved / rejected -> paid -> settled
+model Request {
+  id             Int      @id @default(autoincrement())
+  requestNo      String   @unique
+
+  // ขั้นตอน ① — กรอกโดยผู้ขอเบิก
+  requesterName  String
+  unit           String
+  purpose        String
+  category       String
+  amount         Decimal  @db.Decimal(12, 2)
+  neededDate     DateTime
+  note           String?
+  attachmentName String?
+  attachmentUrl  String?
+  lineUserId     String?
+
+  status         String   @default("pending_approval")
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
