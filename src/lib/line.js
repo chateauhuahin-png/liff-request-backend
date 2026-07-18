@@ -42,6 +42,81 @@ function formatThaiDate(date) {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear() + 543}`;
 }
 
+const STATUS_LABEL = {
+  pending_approval: 'รออนุมัติ',
+  rejected: 'ไม่อนุมัติ',
+  approved: 'รอจ่ายเงิน',
+  paid: 'รอหลักฐาน',
+  settled: 'ปิดเรื่องแล้ว',
+};
+
+// สร้างข้อความ Flex สรุปรายงาน ส่งตอบตอนพิมพ์คำสั่ง "รายงานวันนี้" ฯลฯ
+export function buildReportFlex(report, liffId) {
+  const money = (n) => `฿ ${Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
+
+  const statusLines = Object.entries(report.byStatus).map(([status, count]) =>
+    row(STATUS_LABEL[status] || status, `${count} รายการ`)
+  );
+
+  const categoryLines = report.byCategory
+    .slice(0, 5)
+    .map((c) => row(c.category, `${money(c.amount)} (${c.count})`));
+
+  const contents = {
+    type: 'bubble',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      backgroundColor: '#1E2A22',
+      paddingAll: '16px',
+      contents: [
+        { type: 'text', text: 'รายงานสรุปค่าใช้จ่าย', color: '#FFFFFF', weight: 'bold', size: 'md' },
+        { type: 'text', text: report.label, color: '#D4B15A', size: 'sm', margin: 'sm' },
+      ],
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      paddingAll: '16px',
+      contents: [
+        row('จำนวนคำขอ', `${report.count} รายการ`),
+        row('ยอดเบิกรวม', money(report.totalRequested)),
+        row('ยอดใช้จริง (ปิดเรื่องแล้ว)', money(report.totalActual)),
+        { type: 'separator', margin: 'md' },
+        ...(statusLines.length ? statusLines : [row('สถานะ', 'ไม่มีคำขอในช่วงนี้')]),
+        ...(categoryLines.length ? [{ type: 'separator', margin: 'md' }, ...categoryLines] : []),
+      ],
+    },
+  };
+
+  if (liffId) {
+    contents.footer = {
+      type: 'box',
+      layout: 'vertical',
+      paddingAll: '16px',
+      contents: [
+        {
+          type: 'button',
+          style: 'primary',
+          color: '#1E2A22',
+          action: {
+            type: 'uri',
+            label: '📊 ดูรายงานแบบเต็ม',
+            uri: `https://liff.line.me/${liffId}?report=${report.period}`,
+          },
+        },
+      ],
+    };
+  }
+
+  return {
+    type: 'flex',
+    altText: `รายงานสรุปค่าใช้จ่าย ${report.label} — ยอดเบิกรวม ${money(report.totalRequested)}`,
+    contents,
+  };
+}
+
 function row(label, value) {
   return {
     type: 'box',
