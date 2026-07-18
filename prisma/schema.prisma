@@ -34,6 +34,13 @@ model Request {
   paymentProofUrl   String?
   paidByLineUserId  String?
 
+  // ขั้นตอน ④ — กรอกโดยผู้ขอเบิก ตอนส่งหลักฐานการใช้จ่ายจริงเพื่อปิดเรื่อง
+  actualAmount        Decimal? @db.Decimal(12, 2)
+  settlementNote      String?
+  settlementProofName String?
+  settlementProofUrl  String?
+  settledAt           DateTime?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

@@ -85,7 +85,7 @@ async function handleLineEvent(event) {
         create: { role: 'finance', lineUserId: userId },
       });
       await replyMessage(event.replyToken, [
-        { type: 'text', text: '✅ ลงทะเบียนเป็นเจ้าหน้าที่การเงินเรียบร้อยแล้ว (ร.ท.หญิง กัญญาภัทร แสงจันทร์ ร.น. คนสวย คนน่ารัก ของพี่หวาน)' },
+        { type: 'text', text: '✅ ลงทะเบียนเป็นเจ้าหน้าที่การเงินเรียบร้อยแล้ว\nจะได้รับลิงก์ฟอร์มจ่ายเงินเมื่อคำขอได้รับอนุมัติ' },
       ]);
       return;
     }
@@ -278,15 +278,17 @@ app.post('/requests/:id/pay', upload.single('proof'), async (req, res) => {
       },
     });
 
-    // แจ้งผู้ขอเบิกว่าจ่ายเงินแล้ว พร้อมขอให้ส่งหลักฐานการใช้จ่ายจริงกลับมาทีหลัง (ขั้นตอน ④)
+    // แจ้งผู้ขอเบิกว่าจ่ายเงินแล้ว พร้อมลิงก์ฟอร์มส่งหลักฐานการใช้จ่ายจริง (ขั้นตอน ④)
     if (updated.lineUserId) {
       const methodText = paymentMethod === 'cash' ? 'เงินสด' : 'เงินโอน';
+      const liffId = process.env.FRONTEND_LIFF_ID;
+      const settleLink = liffId ? `\n\nกดลิงก์นี้เพื่อส่งหลักฐานการใช้จ่ายตอนใช้เงินเสร็จ:\nhttps://liff.line.me/${liffId}?settleId=${updated.id}` : '';
       await pushMessage(updated.lineUserId, [
         {
           type: 'text',
           text:
-            `💵 คำขอเบิกเงิน ${updated.requestNo} ได้รับการจ่ายเงินแล้ว (${methodText})\n\n` +
-            `กรุณาเก็บหลักฐานการใช้จ่ายจริง (ใบเสร็จ) ไว้ส่งกลับมาเพื่อปิดเรื่องภายหลัง`,
+            `💵 คำขอเบิกเงิน ${updated.requestNo} ได้รับการจ่ายเงินแล้ว (${methodText})` +
+            settleLink,
         },
       ]);
     }
@@ -294,6 +296,69 @@ app.post('/requests/:id/pay', upload.single('proof'), async (req, res) => {
     res.json({ requestNo: updated.requestNo, status: updated.status });
   } catch (err) {
     console.error('POST /requests/:id/pay failed:', err);
+    res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์ กรุณาลองใหม่อีกครั้ง' });
+  }
+});
+
+// ขั้นตอน ④ — ผู้ขอเบิก ส่งหลักฐานการใช้จ่ายจริง ปิดเรื่อง
+app.post('/requests/:id/settle', upload.single('receipt'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { actualAmount, note } = req.body;
+
+    if (!actualAmount || parseFloat(actualAmount) < 0) {
+      return res.status(400).json({ error: 'กรุณากรอกยอดใช้จ่ายจริงให้ถูกต้อง' });
+    }
+
+    const request = await prisma.request.findUnique({ where: { id } });
+    if (!request) return res.status(404).json({ error: 'ไม่พบคำขอนี้' });
+    if (request.status !== 'paid') {
+      return res.status(400).json({ error: `คำขอนี้ยังไม่พร้อมปิดเรื่อง (สถานะปัจจุบัน: ${request.status})` });
+    }
+
+    const updated = await prisma.request.update({
+      where: { id },
+      data: {
+        status: 'settled',
+        actualAmount: parseFloat(actualAmount),
+        settlementNote: note || null,
+        settlementProofName: req.file ? req.file.originalname : null,
+        settlementProofUrl: req.file ? `/uploads/${req.file.filename}` : null,
+        settledAt: new Date(),
+      },
+    });
+
+    const requestedAmt = Number(updated.amount);
+    const actualAmt = Number(updated.actualAmount);
+    const diff = requestedAmt - actualAmt;
+    let diffText = 'ใช้จ่ายพอดีตามที่เบิก';
+    if (diff > 0) diffText = `เหลือคืน ฿${diff.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
+    if (diff < 0) diffText = `ใช้เกินไป ฿${Math.abs(diff).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
+
+    // แจ้งผู้ขอเบิกว่าปิดเรื่องสำเร็จ
+    if (updated.lineUserId) {
+      await pushMessage(updated.lineUserId, [
+        { type: 'text', text: `✅ ปิดเรื่องคำขอ ${updated.requestNo} เรียบร้อยแล้ว\nยอดใช้จริง ฿${actualAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })} (${diffText})\n\nขอบคุณครับ/ค่ะ` },
+      ]);
+    }
+
+    // แจ้ง น.การเงิน ไว้เป็นข้อมูลประกอบบัญชี (โดยเฉพาะถ้ามีส่วนต่างต้องเรียกเก็บ/จ่ายเพิ่ม)
+    const financeRole = await prisma.role.findUnique({ where: { role: 'finance' } });
+    if (financeRole?.lineUserId) {
+      await pushMessage(financeRole.lineUserId, [
+        {
+          type: 'text',
+          text:
+            `📋 คำขอ ${updated.requestNo} (${updated.requesterName}) ส่งหลักฐานปิดเรื่องแล้ว\n` +
+            `เบิกไป ฿${requestedAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })} — ใช้จริง ฿${actualAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })}\n` +
+            `${diffText}`,
+        },
+      ]);
+    }
+
+    res.json({ requestNo: updated.requestNo, status: updated.status, diff });
+  } catch (err) {
+    console.error('POST /requests/:id/settle failed:', err);
     res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์ กรุณาลองใหม่อีกครั้ง' });
   }
 });
