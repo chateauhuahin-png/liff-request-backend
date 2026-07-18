@@ -85,7 +85,7 @@ async function handleLineEvent(event) {
         create: { role: 'finance', lineUserId: userId },
       });
       await replyMessage(event.replyToken, [
-        { type: 'text', text: '✅ ลงทะเบียนเป็นเจ้าหน้าที่การเงินเรียบร้อยแล้ว (ยังใช้งานเต็มรูปแบบไม่ได้จนกว่าจะสร้างขั้นตอน ③)' },
+        { type: 'text', text: '✅ ลงทะเบียนเป็นเจ้าหน้าที่การเงินเรียบร้อยแล้ว (ร.ท.หญิง กัญญาภัทร แสงจันทร์ ร.น. คนสวยคนน่ารัก)' },
       ]);
       return;
     }
