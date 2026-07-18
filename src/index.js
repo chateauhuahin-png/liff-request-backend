@@ -141,6 +141,28 @@ async function handleLineEvent(event) {
         },
       ]);
     }
+
+    // ขั้นตอน ③ — พออนุมัติแล้ว แจ้ง น.การเงิน พร้อมลิงก์ฟอร์มจ่ายเงินของคำขอนี้โดยเฉพาะ
+    if (action === 'approve') {
+      const financeRole = await prisma.role.findUnique({ where: { role: 'finance' } });
+      const liffId = process.env.FRONTEND_LIFF_ID;
+      if (financeRole?.lineUserId && liffId) {
+        const amountText = `฿ ${Number(updated.amount).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
+        await pushMessage(financeRole.lineUserId, [
+          {
+            type: 'text',
+            text:
+              `💰 มีคำขอเบิกเงินที่ได้รับอนุมัติแล้ว รอจ่ายเงิน\n` +
+              `${updated.requestNo} — ${updated.requesterName}\n` +
+              `จำนวนเงิน ${amountText}\n\n` +
+              `กดลิงก์เพื่อบันทึกการจ่ายเงิน:\n` +
+              `https://liff.line.me/${liffId}?requestId=${updated.id}`,
+          },
+        ]);
+      } else if (!financeRole?.lineUserId) {
+        console.warn('ยังไม่มีเจ้าหน้าที่การเงินลงทะเบียนไว้ — ข้ามการแจ้งเตือน');
+      }
+    }
   }
 }
 
@@ -212,6 +234,67 @@ app.get('/requests', async (req, res) => {
   } catch (err) {
     console.error('GET /requests failed:', err);
     res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' });
+  }
+});
+
+// คำขอรายตัว — ใช้โดยฟอร์มจ่ายเงิน (ขั้นตอน ③) เพื่อโชว์รายละเอียดก่อนจ่าย
+app.get('/requests/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const request = await prisma.request.findUnique({ where: { id } });
+    if (!request) return res.status(404).json({ error: 'ไม่พบคำขอนี้' });
+    res.json(request);
+  } catch (err) {
+    console.error('GET /requests/:id failed:', err);
+    res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' });
+  }
+});
+
+// ขั้นตอน ③ — น.การเงิน บันทึกว่าจ่ายเงินแล้ว (เงินสด/โอน) พร้อมแนบหลักฐาน
+app.post('/requests/:id/pay', upload.single('proof'), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { paymentMethod, financeUserId } = req.body;
+
+    if (!paymentMethod || !['cash', 'transfer'].includes(paymentMethod)) {
+      return res.status(400).json({ error: 'กรุณาเลือกวิธีจ่าย (เงินสด/เงินโอน)' });
+    }
+
+    const request = await prisma.request.findUnique({ where: { id } });
+    if (!request) return res.status(404).json({ error: 'ไม่พบคำขอนี้' });
+    if (request.status !== 'approved') {
+      return res.status(400).json({ error: `คำขอนี้ยังไม่พร้อมจ่ายเงิน (สถานะปัจจุบัน: ${request.status})` });
+    }
+
+    const updated = await prisma.request.update({
+      where: { id },
+      data: {
+        status: 'paid',
+        paymentMethod,
+        paidAt: new Date(),
+        paymentProofName: req.file ? req.file.originalname : null,
+        paymentProofUrl: req.file ? `/uploads/${req.file.filename}` : null,
+        paidByLineUserId: financeUserId || null,
+      },
+    });
+
+    // แจ้งผู้ขอเบิกว่าจ่ายเงินแล้ว พร้อมขอให้ส่งหลักฐานการใช้จ่ายจริงกลับมาทีหลัง (ขั้นตอน ④)
+    if (updated.lineUserId) {
+      const methodText = paymentMethod === 'cash' ? 'เงินสด' : 'เงินโอน';
+      await pushMessage(updated.lineUserId, [
+        {
+          type: 'text',
+          text:
+            `💵 คำขอเบิกเงิน ${updated.requestNo} ได้รับการจ่ายเงินแล้ว (${methodText})\n\n` +
+            `กรุณาเก็บหลักฐานการใช้จ่ายจริง (ใบเสร็จ) ไว้ส่งกลับมาเพื่อปิดเรื่องภายหลัง`,
+        },
+      ]);
+    }
+
+    res.json({ requestNo: updated.requestNo, status: updated.status });
+  } catch (err) {
+    console.error('POST /requests/:id/pay failed:', err);
+    res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์ กรุณาลองใหม่อีกครั้ง' });
   }
 });
 
