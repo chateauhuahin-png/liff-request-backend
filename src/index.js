@@ -12,6 +12,7 @@ import { verifyLiffToken } from './lib/lineAuth.js';
 import { verifySignature, pushMessage, replyMessage, buildApprovalFlex, buildReportFlex } from './lib/line.js';
 import { getReport } from './lib/report.js';
 import { generateReportPdf } from './lib/pdfReport.js';
+import { generateReportImage } from './lib/reportImage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -100,9 +101,14 @@ async function handleLineEvent(event) {
     };
     if (REPORT_COMMANDS[text]) {
       const report = await getReport(prisma, REPORT_COMMANDS[text]);
-      await replyMessage(event.replyToken, [
-        buildReportFlex(report, process.env.FRONTEND_LIFF_ID, process.env.BACKEND_BASE_URL),
-      ]);
+      const backendBaseUrl = process.env.BACKEND_BASE_URL;
+
+      const messages = [buildReportFlex(report, process.env.FRONTEND_LIFF_ID, backendBaseUrl)];
+      if (backendBaseUrl) {
+        const imageUrl = `${backendBaseUrl}/reports/image?period=${REPORT_COMMANDS[text]}`;
+        messages.push({ type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl });
+      }
+      await replyMessage(event.replyToken, messages);
       return;
     }
     return; // ข้อความอื่นๆ ไม่ตอบกลับ
@@ -408,6 +414,23 @@ app.get('/reports/pdf', async (req, res) => {
   } catch (err) {
     console.error('GET /reports/pdf failed:', err);
     res.status(500).json({ error: 'สร้าง PDF ไม่สำเร็จ' });
+  }
+});
+
+// รูปภาพสรุปรายงาน (PNG) — ใช้เป็น URL สำหรับ LINE image message ส่งเข้าแชทโดยตรง
+app.get('/reports/image', async (req, res) => {
+  try {
+    const period = req.query.period;
+    if (!['daily', 'weekly', 'monthly', 'yearly'].includes(period)) {
+      return res.status(400).json({ error: 'period ต้องเป็น daily, weekly, monthly หรือ yearly' });
+    }
+    const report = await getReport(prisma, period);
+    const buffer = await generateReportImage(report);
+    res.setHeader('Content-Type', 'image/png');
+    res.send(buffer);
+  } catch (err) {
+    console.error('GET /reports/image failed:', err);
+    res.status(500).json({ error: 'สร้างรูปภาพไม่สำเร็จ' });
   }
 });
 
