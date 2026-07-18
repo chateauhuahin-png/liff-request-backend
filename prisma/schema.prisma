@@ -30,3 +30,12 @@ model Request {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
+
+// เก็บว่า LINE userId ไหนทำหน้าที่อะไร — ลงทะเบียนผ่านการพิมพ์ข้อความคุยกับ OA
+// role: "commander" (ผบ.หน่วย ผู้อนุมัติ) | "finance" (เจ้าหน้าที่การเงิน)
+model Role {
+  id         Int      @id @default(autoincrement())
+  role       String   @unique
+  lineUserId String
+  updatedAt  DateTime @updatedAt
+}

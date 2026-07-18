@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { prisma } from './lib/prisma.js';
 import { generateRequestNo } from './lib/requestNo.js';
 import { verifyLiffToken } from './lib/lineAuth.js';
+import { verifySignature, pushMessage, replyMessage, buildApprovalFlex } from './lib/line.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,118 @@ const app = express();
 
 const allowedOrigin = process.env.FRONTEND_ORIGIN || '*';
 app.use(cors({ origin: allowedOrigin }));
+
+// --- LINE Webhook ---
+// ต้องอยู่ก่อน express.json() เพราะต้องอ่าน body แบบ raw (Buffer) เพื่อตรวจลายเซ็นของ LINE ก่อน
+app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  const signature = req.headers['x-line-signature'];
+  const channelSecret = process.env.LINE_CHANNEL_SECRET;
+
+  if (channelSecret && !verifySignature(req.body, signature, channelSecret)) {
+    console.warn('LINE webhook signature ไม่ถูกต้อง');
+    return res.status(401).end();
+  }
+
+  let body;
+  try {
+    body = JSON.parse(req.body.toString('utf-8'));
+  } catch {
+    return res.status(400).end();
+  }
+
+  // ตอบ LINE ก่อนทันที ไม่ต้องรอประมวลผลเสร็จ (LINE ต้องการ response ไว เดี๋ยว retry)
+  res.status(200).end();
+
+  for (const event of body.events || []) {
+    handleLineEvent(event).catch((err) => console.error('handleLineEvent error:', err));
+  }
+});
+
+async function handleLineEvent(event) {
+  const userId = event.source?.userId;
+  if (!userId) return;
+
+  if (event.type === 'message' && event.message.type === 'text') {
+    const text = event.message.text.trim();
+
+    if (text === 'ลงทะเบียนผู้อนุมัติ') {
+      await prisma.role.upsert({
+        where: { role: 'commander' },
+        update: { lineUserId: userId },
+        create: { role: 'commander', lineUserId: userId },
+      });
+      await replyMessage(event.replyToken, [
+        { type: 'text', text: '✅ ลงทะเบียนเป็นผู้อนุมัติ (ผบ.หน่วย) เรียบร้อยแล้ว\nจะได้รับแจ้งเตือนเมื่อมีคำขอเบิกเงินใหม่เข้ามา' },
+      ]);
+      return;
+    }
+
+    if (text === 'ลงทะเบียนการเงิน') {
+      await prisma.role.upsert({
+        where: { role: 'finance' },
+        update: { lineUserId: userId },
+        create: { role: 'finance', lineUserId: userId },
+      });
+      await replyMessage(event.replyToken, [
+        { type: 'text', text: '✅ ลงทะเบียนเป็นเจ้าหน้าที่การเงินเรียบร้อยแล้ว (ยังใช้งานเต็มรูปแบบไม่ได้จนกว่าจะสร้างขั้นตอน ③)' },
+      ]);
+      return;
+    }
+    return; // ข้อความอื่นๆ ไม่ตอบกลับ
+  }
+
+  if (event.type === 'postback') {
+    const params = new URLSearchParams(event.postback.data);
+    const action = params.get('action');
+    const id = parseInt(params.get('id'), 10);
+    if (!action || !id) return;
+
+    const commanderRole = await prisma.role.findUnique({ where: { role: 'commander' } });
+    if (!commanderRole || commanderRole.lineUserId !== userId) {
+      await replyMessage(event.replyToken, [{ type: 'text', text: 'ขออภัย คุณไม่ได้เป็นผู้มีสิทธิ์อนุมัติคำขอนี้' }]);
+      return;
+    }
+
+    const request = await prisma.request.findUnique({ where: { id } });
+    if (!request) {
+      await replyMessage(event.replyToken, [{ type: 'text', text: 'ไม่พบคำขอนี้ในระบบ' }]);
+      return;
+    }
+    if (request.status !== 'pending_approval') {
+      await replyMessage(event.replyToken, [
+        { type: 'text', text: `คำขอ ${request.requestNo} ถูกดำเนินการไปแล้ว (สถานะ: ${request.status})` },
+      ]);
+      return;
+    }
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    const updated = await prisma.request.update({ where: { id }, data: { status: newStatus } });
+    const amountText = `฿ ${Number(updated.amount).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
+
+    await replyMessage(event.replyToken, [
+      {
+        type: 'text',
+        text:
+          action === 'approve'
+            ? `✅ อนุมัติคำขอ ${updated.requestNo} แล้ว\nจำนวนเงิน ${amountText}`
+            : `❌ ไม่อนุมัติคำขอ ${updated.requestNo}`,
+      },
+    ]);
+
+    if (updated.lineUserId) {
+      await pushMessage(updated.lineUserId, [
+        {
+          type: 'text',
+          text:
+            action === 'approve'
+              ? `📢 คำขอเบิกเงิน ${updated.requestNo} ของคุณได้รับการอนุมัติแล้ว\nขั้นตอนถัดไป: รอเจ้าหน้าที่การเงินติดต่อเพื่อจ่ายเงิน`
+              : `📢 คำขอเบิกเงิน ${updated.requestNo} ของคุณไม่ได้รับการอนุมัติ`,
+        },
+      ]);
+    }
+  }
+}
+
 app.use(express.json());
 app.use('/uploads', express.static(uploadsDir));
 
@@ -76,8 +189,13 @@ app.post('/requests', upload.single('attachment'), async (req, res) => {
       },
     });
 
-    // TODO (ขั้นตอน ②): ส่ง Flex Message แจ้ง ผบ.หน่วย ผ่าน LINE Messaging API ตรงนี้
-    // ต้องใช้ LINE_CHANNEL_ACCESS_TOKEN ของ channel "ขอเบิกเงิน (ธุรการ)"
+    // ขั้นตอน ② — แจ้งเตือน ผบ.หน่วย ทันทีด้วยข้อความที่มีปุ่มอนุมัติ/ไม่อนุมัติในตัว
+    const commanderRole = await prisma.role.findUnique({ where: { role: 'commander' } });
+    if (commanderRole?.lineUserId) {
+      await pushMessage(commanderRole.lineUserId, [buildApprovalFlex(created)]);
+    } else {
+      console.warn('ยังไม่มีผู้อนุมัติลงทะเบียนไว้ — ข้ามการแจ้งเตือน (คำขอยังบันทึกไว้ปกติ รออนุมัติทีหลังได้)');
+    }
 
     res.status(201).json({ requestNo: created.requestNo });
   } catch (err) {
