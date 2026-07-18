@@ -51,7 +51,7 @@ const STATUS_LABEL = {
 };
 
 // สร้างข้อความ Flex สรุปรายงาน ส่งตอบตอนพิมพ์คำสั่ง "รายงานวันนี้" ฯลฯ
-export function buildReportFlex(report, liffId) {
+export function buildReportFlex(report, liffId, backendBaseUrl) {
   const money = (n) => `฿ ${Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
 
   const statusLines = Object.entries(report.byStatus).map(([status, count]) =>
@@ -90,23 +90,37 @@ export function buildReportFlex(report, liffId) {
     },
   };
 
+  const footerButtons = [];
   if (liffId) {
+    footerButtons.push({
+      type: 'button',
+      style: 'primary',
+      color: '#1E2A22',
+      action: {
+        type: 'uri',
+        label: '📊 ดูรายงานแบบเต็ม',
+        uri: `https://liff.line.me/${liffId}?report=${report.period}`,
+      },
+    });
+  }
+  if (backendBaseUrl) {
+    footerButtons.push({
+      type: 'button',
+      style: 'secondary',
+      action: {
+        type: 'uri',
+        label: '📄 ดาวน์โหลด PDF',
+        uri: `${backendBaseUrl}/reports/pdf?period=${report.period}`,
+      },
+    });
+  }
+  if (footerButtons.length) {
     contents.footer = {
       type: 'box',
       layout: 'vertical',
+      spacing: 'sm',
       paddingAll: '16px',
-      contents: [
-        {
-          type: 'button',
-          style: 'primary',
-          color: '#1E2A22',
-          action: {
-            type: 'uri',
-            label: '📊 ดูรายงานแบบเต็ม',
-            uri: `https://liff.line.me/${liffId}?report=${report.period}`,
-          },
-        },
-      ],
+      contents: footerButtons,
     };
   }
 

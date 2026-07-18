@@ -11,6 +11,7 @@ import { generateRequestNo } from './lib/requestNo.js';
 import { verifyLiffToken } from './lib/lineAuth.js';
 import { verifySignature, pushMessage, replyMessage, buildApprovalFlex, buildReportFlex } from './lib/line.js';
 import { getReport } from './lib/report.js';
+import { generateReportPdf } from './lib/pdfReport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -92,14 +93,16 @@ async function handleLineEvent(event) {
     }
 
     const REPORT_COMMANDS = {
-      รายงานวันนี้: 'daily',
-      รายงานสัปดาห์นี้: 'weekly',
-      รายงานเดือนนี้: 'monthly',
-      รายงานปีนี้: 'yearly',
+      'รายงานวันนี้': 'daily',
+      'รายงานสัปดาห์นี้': 'weekly',
+      'รายงานเดือนนี้': 'monthly',
+      'รายงานปีนี้': 'yearly',
     };
     if (REPORT_COMMANDS[text]) {
       const report = await getReport(prisma, REPORT_COMMANDS[text]);
-      await replyMessage(event.replyToken, [buildReportFlex(report, process.env.FRONTEND_LIFF_ID)]);
+      await replyMessage(event.replyToken, [
+        buildReportFlex(report, process.env.FRONTEND_LIFF_ID, process.env.BACKEND_BASE_URL),
+      ]);
       return;
     }
     return; // ข้อความอื่นๆ ไม่ตอบกลับ
@@ -388,6 +391,23 @@ app.get('/reports', async (req, res) => {
   } catch (err) {
     console.error('GET /reports failed:', err);
     res.status(500).json({ error: 'เกิดข้อผิดพลาดฝั่งเซิร์ฟเวอร์' });
+  }
+});
+
+// ดาวน์โหลดรายงานเป็นไฟล์ PDF จริง — เชื่อถือได้กว่าใช้ print ของเบราว์เซอร์ เปิด/แชร์ผ่าน LINE ได้ตรงๆ
+app.get('/reports/pdf', async (req, res) => {
+  try {
+    const period = req.query.period;
+    if (!['daily', 'weekly', 'monthly', 'yearly'].includes(period)) {
+      return res.status(400).json({ error: 'period ต้องเป็น daily, weekly, monthly หรือ yearly' });
+    }
+    const report = await getReport(prisma, period);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="report-${period}.pdf"`);
+    generateReportPdf(report, res);
+  } catch (err) {
+    console.error('GET /reports/pdf failed:', err);
+    res.status(500).json({ error: 'สร้าง PDF ไม่สำเร็จ' });
   }
 });
 
