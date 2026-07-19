@@ -100,15 +100,18 @@ export function generateReportPdf(report, outputStream) {
   const sigY = doc.y;
   const colWidth = 220;
   doc.fontSize(10);
-  doc.text('ลงชื่อ ร.ท.หญิง..................................ร.น.', 50, sigY);
-  doc.text('(กัญญาภัทร แสงจันทร์)', 50, sigY + 18);
-  doc.text('เจ้าหน้าที่การเงิน นพค.43', 50, sigY + 36);
-  doc.text('วันที่ ..............................', 50, sigY + 54);
+  const nameLine = '              (นาทปิยะ แก้วศรีบุตร)';
+  const roleLine = 'ผบ.นพค.43';
+  doc.text('ลงชื่อ น.อ. ..............................', 50, sigY);
+  doc.text(nameLine, 50, sigY + 18);
+  const centerX = 50 + (doc.widthOfString(nameLine) - doc.widthOfString(roleLine)) / 2;
+  doc.text(roleLine, centerX + doc.widthOfString('      '), sigY + 36);
+  doc.text('              วันที่ ..............................', 50, sigY + 54);
 
-  doc.text('ลงชื่อ น.อ. ..............................', 50 + colWidth + 30, sigY);
-  doc.text('(นาทปิยะ แก้วศรีบุตร)', 50 + colWidth + 30, sigY + 18);
-  doc.text('ผบ.นพค.43', 50 + colWidth + 30, sigY + 36);
-  doc.text('วันที่ ..............................', 50 + colWidth + 30, sigY + 54);
+  doc.text('ลงชื่อ ร.ท.หญิง..................................ร.น.', 50 + colWidth + 30, sigY);
+  doc.text('                       (กัญญาภัทร แสงจันทร์)', 50 + colWidth + 30, sigY + 18);
+  doc.text('                       เจ้าหน้าที่การเงิน นพค.43', 50 + colWidth + 30, sigY + 36);
+  doc.text('                       วันที่ ..............................', 50 + colWidth + 30, sigY + 54);
 
   doc.end();
 }
