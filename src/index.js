@@ -12,6 +12,7 @@ import { verifyLiffToken } from './lib/lineAuth.js';
 import { verifySignature, pushMessage, replyMessage, buildApprovalFlex, buildReportFlex } from './lib/line.js';
 import { getReport } from './lib/report.js';
 import { generateReportPdf } from './lib/pdfReport.js';
+import { PERSONNEL } from './data/personnel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -408,6 +409,11 @@ app.get('/reports/pdf', async (req, res) => {
     console.error('GET /reports/pdf failed:', err);
     res.status(500).json({ error: 'สร้าง PDF ไม่สำเร็จ' });
   }
+});
+
+// รายชื่อกำลังพล — ใช้เติม dropdown ในฟอร์มขอเบิกเงิน (แก้ไขรายชื่อได้ที่ src/data/personnel.js)
+app.get('/personnel', (req, res) => {
+  res.json(PERSONNEL);
 });
 
 const port = process.env.PORT || 3000;
